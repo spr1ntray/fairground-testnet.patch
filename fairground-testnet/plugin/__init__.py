@@ -1,0 +1,1 @@
+# Soft Hub Fairground plugin.

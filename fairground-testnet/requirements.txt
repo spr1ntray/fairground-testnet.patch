@@ -1,0 +1,6 @@
+cryptography==48.0.1
+eth-abi==5.2.0
+eth-account==0.13.7
+playwright==1.52.0
+requests==2.34.2
+web3==7.16.0
