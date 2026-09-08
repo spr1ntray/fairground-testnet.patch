@@ -3,7 +3,7 @@
   "contract_version": "SH-SOFTWARE-0.6/5",
   "id": "io.sprintray.fairground-testnet",
   "name": "Fairground Testnet",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "description": "Сезон 3: сделки ключом Hub, браузерный отпечаток на каждый запрос.",
   "author": "sprintray",
   "presentation": {
@@ -34,9 +34,7 @@
   "permissions": {
     "secrets": [
       "evm_private_key",
-      "proxy",
-      "adspower_profile",
-      "adspower_api_key"
+      "proxy"
     ],
     "network": [
       "fairground.fi",
@@ -45,21 +43,12 @@
       "incentives.fairground.fi",
       "waitlist.fairground.fi",
       "sepolia-rollup.arbitrum.io",
-      "privy.fairground.fi",
-      "auth.privy.io",
-      "privy.io",
-      "arb-sepolia.g.alchemy.com",
-      "faucet.quicknode.com",
-      "www.google.com",
-      "www.gstatic.com",
-      "www.recaptcha.net",
-      "local.adspower.net",
-      "local.adspower.com"
+      "arb-sepolia.g.alchemy.com"
     ],
     "chains": [421614],
     "financial_risk": "testnet",
-    "browser": true,
-    "local_services": ["adspower"]
+    "browser": false,
+    "local_services": []
   },
   "actions": [
     {
@@ -230,51 +219,6 @@
             "type": "integer",
             "title": "Параллельные аккаунты",
             "description": "Сколько кошельков закрывать сразу.",
-            "default": 2,
-            "minimum": 1,
-            "maximum": 5,
-            "multipleOf": 1,
-            "x-ui": {"group": "Выполнение", "order": 0, "unit": "аккаунтов"}
-          }
-        },
-        "required": [],
-        "additionalProperties": false
-      }
-    },
-    {
-      "id": "faucet",
-      "name": "Кран",
-      "description": "Открывает AdsPower и клеймит Arbitrum Sepolia ETH на gas. Капчу решаешь в окне профиля.",
-      "risk": "external_write",
-      "account_mode": "one_or_more",
-      "permissions": {
-        "secrets": [
-          "evm_private_key",
-          "proxy",
-          "adspower_profile",
-          "adspower_api_key"
-        ]
-      },
-      "resources": {
-        "account": ["private_key", "proxy", "adspower_profile"],
-        "settings": ["adspower_api"]
-      },
-      "output": {
-        "mode": "account_table",
-        "title": "Кран",
-        "primary_kind": "account_summary",
-        "columns": [
-          {"key": "faucet", "title": "Кран", "type": "boolean"},
-          {"key": "style", "title": "Стиль", "type": "string"}
-        ]
-      },
-      "options": {
-        "type": "object",
-        "properties": {
-          "account_concurrency": {
-            "type": "integer",
-            "title": "Параллельные аккаунты",
-            "description": "Сколько профилей AdsPower открывать сразу.",
             "default": 2,
             "minimum": 1,
             "maximum": 5,

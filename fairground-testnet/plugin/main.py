@@ -44,7 +44,7 @@ CRYPTO_MARKETS = (
     "ZEC-USD",
     "LIT-USD",
 )
-WRITE_ACTIONS = frozenset({"farm", "flatten", "faucet"})
+WRITE_ACTIONS = frozenset({"farm", "flatten"})
 
 
 class HubHumanLog:
@@ -77,17 +77,15 @@ class HubHumanLog:
 def run(context: HubContext) -> dict[str, Any]:
     if sys.platform not in SUPPORTED_OS:
         raise RuntimeError("Этот софт собран для macOS")
-    if context.action_id not in {"inspect", "farm", "flatten", "faucet"}:
+    if context.action_id not in {"inspect", "farm", "flatten"}:
         raise ValueError("Неизвестное действие")
 
     options = _options(context)
     _protect_all(context)
     identities: dict[str, BrowserIdentity] = {}
     blocked: set[str] = set()
-    if context.action_id in {"farm", "faucet", "inspect"}:
-        blocked, identities = _resolve_identities(
-            context, required=context.action_id == "faucet"
-        )
+    if context.action_id in {"farm", "inspect"}:
+        blocked, identities = _resolve_identities(context, required=False)
 
     counters = {
         "total": len(context.accounts),

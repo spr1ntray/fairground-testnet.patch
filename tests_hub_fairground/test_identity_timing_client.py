@@ -345,8 +345,11 @@ class ManifestTests(unittest.TestCase):
         self.assertNotIn("adspower_profile", farm["resources"]["account"])
         self.assertNotIn("email_password", farm["permissions"]["secrets"])
         self.assertLessEqual(len(manifest["presentation"]["description"]), 80)
-        faucet = next(action for action in manifest["actions"] if action["id"] == "faucet")
-        self.assertIn("adspower_profile", faucet["resources"]["account"])
+        self.assertFalse(manifest["permissions"]["browser"])
+        self.assertEqual(manifest["permissions"]["local_services"], [])
+        self.assertNotIn("adspower_profile", manifest["permissions"]["secrets"])
+        self.assertNotIn("adspower_api_key", manifest["permissions"]["secrets"])
+        self.assertFalse(any(action["id"] == "faucet" for action in manifest["actions"]))
 
 
 class BrowserHelperTests(unittest.TestCase):
