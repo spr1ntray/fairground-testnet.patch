@@ -11,7 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from plugin.fairground_bot.client import FairgroundClient, decode_http_body
+from plugin.fairground_bot.client import (
+    FairgroundClient,
+    decode_http_body,
+    _RawRequest,
+    split_proxy_tunnel_headers,
+)
 from plugin.fairground_bot.browser_trade import (
     browser_fetch_headers,
     click_frame_rank,
@@ -208,6 +213,22 @@ class ClientTests(unittest.TestCase):
         self.assertIn("Connect-Protocol-Version", names)
         self.assertNotIn("Sec-Ch-Ua", names)
         self.assertNotIn("User-agent", names)
+
+    def test_proxy_auth_moves_to_connect_tunnel(self) -> None:
+        request = _RawRequest(
+            "https://api.fairground.fi/x",
+            method="POST",
+            data=b"{}",
+            headers={"sec-ch-ua": '"Chromium";v="143"'},
+        )
+        request.add_header("Proxy-authorization", "Basic dXNlcjpwYXNz")
+        merged = dict(request.header_items())
+        self.assertEqual(merged["Proxy-Authorization"], "Basic dXNlcjpwYXNz")
+        self.assertNotIn("Proxy-authorization", merged)
+        tunnel = split_proxy_tunnel_headers(merged)
+        self.assertEqual(tunnel, {"Proxy-Authorization": "Basic dXNlcjpwYXNz"})
+        self.assertNotIn("Proxy-Authorization", merged)
+        self.assertIn("sec-ch-ua", merged)
 
     def test_gzip_body_is_decoded(self) -> None:
         payload = gzip.compress(b'{"ok":true}')

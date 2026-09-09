@@ -78,7 +78,26 @@ class _RawRequest(Request):
             return "Host"
         if lowered == "connection":
             return "Connection"
+        if lowered == "proxy-authorization":
+            return "Proxy-Authorization"
         return key
+
+
+def _pop_header(headers: dict[str, str], name: str) -> str:
+    target = name.lower()
+    for key in list(headers):
+        if key.lower() == target:
+            return headers.pop(key)
+    return ""
+
+
+def split_proxy_tunnel_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Move proxy auth onto CONNECT. urllib names it Proxy-authorization."""
+    tunnel: dict[str, str] = {}
+    value = _pop_header(headers, "Proxy-Authorization")
+    if value:
+        tunnel["Proxy-Authorization"] = value
+    return tunnel
 
 
 def decode_http_body(body: bytes, content_encoding: str = "") -> bytes:
@@ -131,11 +150,7 @@ def _do_open_preserve_case(handler, http_class, req, **http_conn_args):  # noqa:
     headers.update({key: value for key, value in req.headers.items() if key not in headers})
     headers["Connection"] = "close"
     if req._tunnel_host:
-        tunnel_headers = {}
-        if "Proxy-Authorization" in headers:
-            tunnel_headers["Proxy-Authorization"] = headers["Proxy-Authorization"]
-            del headers["Proxy-Authorization"]
-        connection.set_tunnel(req._tunnel_host, headers=tunnel_headers)
+        connection.set_tunnel(req._tunnel_host, headers=split_proxy_tunnel_headers(headers))
     try:
         try:
             connection.request(
@@ -225,7 +240,9 @@ class FairgroundClient:
         except HTTPError as exc:
             raise FairgroundAPIError(f"Fairground API returned HTTP {exc.code}") from exc
         except (URLError, TimeoutError, OSError) as exc:
-            raise FairgroundAPIError("Fairground API is unavailable") from exc
+            raise FairgroundAPIError(
+                f"Fairground API is unavailable ({type(exc).__name__})"
+            ) from exc
 
     def _with_chain(self, payload: dict[str, Any]) -> dict[str, Any]:
         body = dict(payload)
