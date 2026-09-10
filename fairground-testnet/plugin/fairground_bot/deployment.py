@@ -36,34 +36,30 @@ class DeploymentManifest:
 
 ARBITRUM_SEPOLIA = DeploymentManifest(
     chain_id=421614,
-    perps_contract="0x924e82AA0c62a44EA7148945Ae078100cFE2b595",
+    # Live UI (2026-09-10 HAR): new diamond + new test USDC. Old
+    # 0x924e82AA… / 0xAa6112ab… still exist, so a stale pin keeps verifying
+    # and then every open/reduce reverts.
+    perps_contract="0xFc371e4fCb222f67f90E8156867D6cdb626cb7C9",
     multicall_forwarder="0x415fF910e58ed23b4493620EE12A7b195a016820",
-    collateral_token="0xAa6112ab9850fd185632Ef0F4029487b9572D279",  # gitleaks:allow — public contract
+    collateral_token="0x4E1156749dd156D06dCE5baC0f8f5A43792C9EDb",  # gitleaks:allow — public contract
     collateral_decimals=6,
     collateral_proxy_code_hash="a9a0e35ef58350a560173c241d616d51e1ca9c7050bdf403e9914dc0733cc22b",
-    collateral_implementation="0x1616113f481897b4b14E487664177a100C28adaE",
-    collateral_implementation_code_hash="1daa557ab506a4cfb2d289c63137927e50985e9001c68640f78be48d2ae90f06",
+    collateral_implementation="0xB3027f76ABa178cB3e45EC01c70d5F2ae970ecf0",
+    collateral_implementation_code_hash="74db35d4753beac14486b402d34b23a163ced66f243225f63631f643c16c5ba7",
     price_oracle="0x47D1706cbaFEDc5D29eB68923C13F7289e4B7C9C",
     oracle_proxy_code_hash="f83adf10f05f94fef4ed0a49925b1677b93b1b2ee0af655887d4d4f6d6937604",
     oracle_implementation="0xfb21d6D11cf08944E8CdF2Df4008c5aB442CC033",
     oracle_implementation_code_hash="8824dcc4b98fd3d286cbc7ad4ccda2192d47db3bae57dab7e5d9f0d58b8fe907",
-    proxy_code_hash="cee396e4cfe0080376a54773d9ed651bcee16a1a3eeda2613099cc51b812190d",
+    proxy_code_hash="9f9a3e08cf7a33f73ccd80d3edab7f6db6374bff59ac349e0f400eed23ce7484",
     multicall_code_hash="0b949075b694511b0f1fea4788fb014b58059e178f6b1e595e1bfb922db909e2",
-    # The proxy dispatches selector => facet from mapping slot
-    # bytes32(uint256(namespace) - 1).  Pinning the proxy bytecode alone would
-    # not detect a facet upgrade, so the write facets are checked separately.
     selector_storage_namespace="be498a3b14fd79a48c3c9af86ff14271ed497d09071013334028d28e7791db20",
-    # Fairground performed an on-chain EIP-2535 DiamondCut upgrade at blocks
-    # 288852049..288852359 on 2026-07-18.  The production frontend still pins
-    # this proxy and the same ABI selectors.  Current facets were independently
-    # resolved from selector storage and their runtime bytecode re-hashed.
-    # open/reduce: 0x1091b1A5a3b6a36E738D9ccfCD977E707C310afD
-    open_reduce_facet_code_hash="b1fc6cd7385449c4bb03a49475223d5b246f457c424c4d2a967f1c14b46f5e9f",
-    # cancel: 0x3dF2EC1562F21A01032d3695ce3ae39B70203a60
-    cancel_facet_code_hash="61c535c76bb5ebbf6267607fae2b6839f5a02ac3f38e90d01a0f61d336d0ca6f",
-    getter_facet_code_hash="b9b5cc86ce496895ad0b40fd4535f3c67b1b7842a76b40d3b8a580ff1c607c6d",
-    # market config: 0x19d88a294B938e4Cb3D5342c110DEa5c7B302F02
-    market_config_facet_code_hash="80912b6c1566cf6c157c3cc1b5e53ccab7054f3509e211265c6ee2aa7a79eaf7",
+    # open/reduce: 0xAf7aCd4c77D870E47443F6C61F1d73867347B2fc
+    open_reduce_facet_code_hash="32e7765755034981efe383a26de0f750006ee1d89a4ed8777d509c3fe65679c0",
+    # cancel: 0x5cAee0e06d155033D358cC1761b26055f452D2BB
+    cancel_facet_code_hash="a5864c3ba6e513425cb1a309e6295e24999afac0077ed5db4ce6bce84472408e",
+    getter_facet_code_hash="be6ff36d1a4b645db6ec8d3de4caf29b34695cd34fd827f41e191c716bf6ef92",
+    # market config: 0x0804CFF711B5EF500F087857c8f360eFd303A058
+    market_config_facet_code_hash="7f7afceefcb109ce822e2fb9daa225773425c24c1ad3013eb331c34caaa9845a",
 )
 
 

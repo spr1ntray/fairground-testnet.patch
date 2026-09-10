@@ -597,7 +597,9 @@ class OnchainExecutor:
     @staticmethod
     def _hex_candidates(value: Any) -> list[str]:
         found: list[str] = []
-        if isinstance(value, str):
+        if isinstance(value, (bytes, bytearray)):
+            found.append("0x" + bytes(value).hex())
+        elif isinstance(value, str):
             found.extend(re.findall(r"0x[0-9a-fA-F]{8,}", value))
         elif isinstance(value, dict):
             for nested in value.values():
@@ -613,7 +615,11 @@ class OnchainExecutor:
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise OptionalDependencyMissing("eth-abi is required for oracle errors") from exc
         selector_hex = self._oracle_selector.hex().lower()
-        for candidate in self._hex_candidates(error.args):
+        blobs: list[Any] = [error.args, str(error)]
+        for attr in ("data", "message"):
+            if hasattr(error, attr):
+                blobs.append(getattr(error, attr))
+        for candidate in self._hex_candidates(blobs):
             raw_hex = candidate.removeprefix("0x")
             if not raw_hex.lower().startswith(selector_hex):
                 continue

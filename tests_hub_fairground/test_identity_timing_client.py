@@ -375,6 +375,18 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(farm_conc["maximum"], 20)
         self.assertEqual(farm_conc["minimum"], 1)
 
+    def test_live_ui_diamond_and_usdc_are_pinned(self) -> None:
+        from plugin.fairground_bot.deployment import ARBITRUM_SEPOLIA
+
+        self.assertEqual(
+            ARBITRUM_SEPOLIA.perps_contract.lower(),
+            "0xfc371e4fcb222f67f90e8156867d6cdb626cb7c9",
+        )
+        self.assertEqual(
+            ARBITRUM_SEPOLIA.collateral_token.lower(),
+            "0x4e1156749dd156d06dce5bac0f8f5a43792c9edb",
+        )
+
 
 class BrowserHelperTests(unittest.TestCase):
     def test_extension_url(self) -> None:
