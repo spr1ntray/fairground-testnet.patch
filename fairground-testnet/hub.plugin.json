@@ -3,7 +3,7 @@
   "contract_version": "SH-SOFTWARE-0.6/5",
   "id": "io.sprintray.fairground-testnet",
   "name": "Fairground Testnet",
-  "version": "1.7.5",
+  "version": "1.7.6",
   "description": "Сезон 3: сделки ключом Hub, браузерный отпечаток на каждый запрос.",
   "author": "sprintray",
   "presentation": {
@@ -82,10 +82,10 @@
           "account_concurrency": {
             "type": "integer",
             "title": "Параллельные аккаунты",
-            "description": "Сколько кошельков сразу.",
+            "description": "Сколько кошельков сразу. 20 — все выбранные.",
             "default": 3,
             "minimum": 1,
-            "maximum": 5,
+            "maximum": 20,
             "multipleOf": 1,
             "x-ui": {"group": "Выполнение", "order": 0, "unit": "аккаунтов"}
           },
@@ -218,10 +218,10 @@
           "account_concurrency": {
             "type": "integer",
             "title": "Параллельные аккаунты",
-            "description": "Сколько кошельков закрывать сразу.",
+            "description": "Сколько кошельков закрывать сразу. 20 — все выбранные.",
             "default": 2,
             "minimum": 1,
-            "maximum": 5,
+            "maximum": 20,
             "multipleOf": 1,
             "x-ui": {"group": "Выполнение", "order": 0, "unit": "аккаунтов"}
           }
@@ -263,10 +263,10 @@
           "account_concurrency": {
             "type": "integer",
             "title": "Параллельные аккаунты",
-            "description": "Сколько кошельков читать сразу.",
+            "description": "Сколько кошельков читать сразу. 20 — все выбранные.",
             "default": 5,
             "minimum": 1,
-            "maximum": 5,
+            "maximum": 20,
             "multipleOf": 1,
             "x-ui": {"group": "Выполнение", "order": 0, "unit": "аккаунтов"}
           }

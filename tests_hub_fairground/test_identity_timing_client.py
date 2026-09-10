@@ -371,6 +371,9 @@ class ManifestTests(unittest.TestCase):
         self.assertNotIn("adspower_profile", manifest["permissions"]["secrets"])
         self.assertNotIn("adspower_api_key", manifest["permissions"]["secrets"])
         self.assertFalse(any(action["id"] == "faucet" for action in manifest["actions"]))
+        farm_conc = farm["options"]["properties"]["account_concurrency"]
+        self.assertEqual(farm_conc["maximum"], 20)
+        self.assertEqual(farm_conc["minimum"], 1)
 
 
 class BrowserHelperTests(unittest.TestCase):
