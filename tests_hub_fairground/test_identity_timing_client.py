@@ -387,6 +387,25 @@ class ManifestTests(unittest.TestCase):
             "0x4e1156749dd156d06dce5bac0f8f5a43792c9edb",
         )
 
+    def test_market_config_abi_matches_new_diamond(self) -> None:
+        from plugin.fairground_bot.onchain import PERPS_ABI
+
+        getter = next(item for item in PERPS_ABI if item.get("name") == "getMarketConfig")
+        names = [field["name"] for field in getter["outputs"][0]["components"]]
+        self.assertEqual(
+            names,
+            [
+                "name",
+                "minLeverage",
+                "maxLeverage",
+                "minTradeSize",
+                "maxTradeSize",
+                "tickDecimals",
+                "sizeDecimals",
+            ],
+        )
+        self.assertTrue(api_lot_agrees_with_chain(0, 0))
+
 
 class BrowserHelperTests(unittest.TestCase):
     def test_extension_url(self) -> None:

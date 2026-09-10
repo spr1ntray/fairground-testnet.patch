@@ -156,7 +156,6 @@ PERPS_ABI: list[dict[str, Any]] = [
                     {"name": "minTradeSize", "type": "uint48"},
                     {"name": "maxTradeSize", "type": "uint48"},
                     {"name": "tickDecimals", "type": "uint8"},
-                    {"name": "lotSize", "type": "uint24"},
                     {"name": "sizeDecimals", "type": "uint8"},
                 ],
             }
@@ -531,13 +530,20 @@ class OnchainExecutor:
             raw = self.perps.functions.getMarketConfig(int(market_id)).call()
         except Exception as exc:
             raise OnchainError("Could not read on-chain market configuration") from exc
-        if not isinstance(raw, (list, tuple)) or len(raw) != 8:
+        if not isinstance(raw, (list, tuple)) or len(raw) not in (7, 8):
             raise OnchainError("On-chain market configuration has an unexpected shape")
         name_bytes = bytes(raw[0])
         try:
             name = name_bytes.rstrip(b"\x00").decode("utf-8")
         except UnicodeDecodeError as exc:
             raise OnchainError("On-chain market name is malformed") from exc
+        # New diamond dropped lotSize; API still sends 0. Size decimals stay last.
+        if len(raw) == 8:
+            lot_size_raw = int(raw[6])
+            size_decimals = int(raw[7])
+        else:
+            lot_size_raw = 0
+            size_decimals = int(raw[6])
         return OnchainMarketConfig(
             name=name,
             min_leverage_raw=int(raw[1]),
@@ -545,8 +551,8 @@ class OnchainExecutor:
             min_trade_size_units=int(raw[3]),
             max_trade_size_units=int(raw[4]),
             tick_decimals=int(raw[5]),
-            lot_size_raw=int(raw[6]),
-            size_decimals=int(raw[7]),
+            lot_size_raw=lot_size_raw,
+            size_decimals=size_decimals,
         )
 
     def _fee_fields(self) -> dict[str, int]:

@@ -30,7 +30,7 @@ from .validation import ValidationError, decimal_value, normalize_address, norma
 
 
 def api_lot_agrees_with_chain(api_lot: object, chain_lot: int) -> bool:
-    """Connect JSON often omits lotSize (0). The diamond still stores a real uint24."""
+    """Connect JSON often omits lotSize (0). New diamond dropped the field too."""
 
     try:
         value = Decimal(str(api_lot if api_lot is not None else "0"))
