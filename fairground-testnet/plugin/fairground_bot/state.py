@@ -158,6 +158,7 @@ ALLOWED_TRANSITIONS: dict[CycleState, set[CycleState]] = {
         CycleState.ENTRY_PENDING,
         CycleState.ENTRY_PARTIAL,
         CycleState.POSITION_VERIFY,
+        CycleState.HOLDING,
         CycleState.PAUSED,
         CycleState.QUARANTINED,
     },
@@ -346,7 +347,9 @@ class StateStore:
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._validate_private_directory(parent)
         self._validate_private_artifact(self.path, create=True)
+        self._db_identity: tuple[int, int] | None = None
         self._initialize()
+        self._db_identity = self._harden_artifacts()
 
     @staticmethod
     def _validate_private_directory(path: Path) -> None:
@@ -465,15 +468,27 @@ class StateStore:
         self._validate_private_artifact(Path(f"{self.path}-shm"))
         return database_identity
 
+    def _current_db_identity(self) -> tuple[int, int] | None:
+        try:
+            metadata = os.lstat(self.path)
+        except OSError:
+            return None
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            return None
+        return metadata.st_dev, metadata.st_ino
+
     def _connect(self) -> sqlite3.Connection:
-        database_identity = self._harden_artifacts()
+        current = self._current_db_identity()
+        if self._db_identity is None or current != self._db_identity:
+            self._db_identity = self._harden_artifacts()
+        database_identity = self._db_identity
         try:
             conn = sqlite3.connect(self.path, timeout=5, isolation_level=None)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys=ON")
             # Multi-account farm: many workers write leases/cycles concurrently.
             conn.execute("PRAGMA busy_timeout=30000")
-            if self._harden_artifacts() != database_identity:
+            if self._current_db_identity() != database_identity:
                 raise StoreError("State database changed while connecting")
             return conn
         except Exception:

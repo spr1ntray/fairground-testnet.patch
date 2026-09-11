@@ -406,6 +406,14 @@ class ManifestTests(unittest.TestCase):
         )
         self.assertTrue(api_lot_agrees_with_chain(0, 0))
 
+    def test_instant_fill_can_hold_from_entry_discovery(self) -> None:
+        from plugin.fairground_bot.state import ALLOWED_TRANSITIONS, CycleState
+
+        self.assertIn(
+            CycleState.HOLDING,
+            ALLOWED_TRANSITIONS[CycleState.ENTRY_DISCOVERY],
+        )
+
 
 class BrowserHelperTests(unittest.TestCase):
     def test_extension_url(self) -> None:
