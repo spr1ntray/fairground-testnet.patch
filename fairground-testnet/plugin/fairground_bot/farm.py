@@ -14,6 +14,7 @@ from .accounts import AccountError, FarmAccount
 from .client import FairgroundAPIError, FairgroundClient
 from .config import Settings
 from .onchain import OnchainError, OnchainExecutor, SimulationError
+from .operations import WalletOperations
 from .proxy import ProxyError
 from .safety import MarketLimits
 from .identity import BrowserIdentity
@@ -59,6 +60,28 @@ LEVERAGE_LEVEL_FACTORS = {
 
 class FarmError(RuntimeError):
     pass
+
+
+class _OpsLog:
+    """Adapt VolumeFarm's callable log to WalletOperations' HumanLogger surface."""
+
+    def __init__(self, emit: Callable[[object], None]) -> None:
+        self._emit = emit
+
+    def info(self, message: object, *, scope: str = "SYSTEM") -> None:
+        self._emit(message)
+
+    def action(self, message: object, *, scope: str = "SYSTEM") -> None:
+        self._emit(message)
+
+    def success(self, message: object, *, scope: str = "SYSTEM") -> None:
+        self._emit(message)
+
+    def warning(self, message: object, *, scope: str = "SYSTEM") -> None:
+        self._emit(message)
+
+    def error(self, message: object, *, scope: str = "SYSTEM") -> None:
+        self._emit(message)
 
 
 def _looks_like_not_waitlisted(exc: BaseException) -> bool:
@@ -1481,6 +1504,38 @@ class VolumeFarm:
             }
         )
 
+    def _normalize_before_rounds(
+        self,
+        *,
+        account: FarmAccount,
+        client: FairgroundClient,
+        chain: OnchainExecutor,
+        settings: Settings,
+    ) -> bool:
+        """Close leftover POS/ORD from a previous run before opening a new cycle."""
+
+        if self._remote_is_flat(client, account.address):
+            return True
+        self.log(
+            f"[•] {account.label} | leftover POS/ORD — закрываю перед новым циклом"
+        )
+        ops = WalletOperations(
+            settings=settings,
+            store=self.store,
+            log=_OpsLog(self.log),
+        )
+        identity = self._identities.get(account.address.lower())
+        if identity is not None:
+            ops.bind_identity(account.address, identity)
+        ok = ops.prepare_account_flat(account, client=client, chain=chain)
+        if ok:
+            self.log(f"[✓] {account.label} | leftover закрыт · аккаунт flat")
+        else:
+            self.log(
+                f"[-] {account.label} | leftover не закрылся · новые rounds пропущены"
+            )
+        return ok
+
     def _remote_is_flat(self, client: FairgroundClient, address: str) -> bool:
         """Signerless flat check for safe pre-entry cycle abort."""
 
@@ -1998,6 +2053,17 @@ class VolumeFarm:
                 chain = self._executor_for(account, client)
                 chain.verify_deployment()
             assert chain is not None
+            if not self._normalize_before_rounds(
+                account=account,
+                client=client,
+                chain=chain,
+                settings=scoped_settings,
+            ):
+                result.errors.append(
+                    "Account must be globally flat with no active orders before a new cycle"
+                )
+                result.last_state = "LEFTOVER"
+                return result
 
             for round_index in range(first_new_round, planned + 1):
                 if self.store.get_active_cycle(account.address) is not None:

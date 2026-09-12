@@ -660,13 +660,21 @@ class WalletOperations:
                 )
         return txs
 
-    def prepare_account_flat(self, account: FarmAccount) -> bool:
+    def prepare_account_flat(
+        self,
+        account: FarmAccount,
+        *,
+        client: FairgroundClient | None = None,
+        chain: OnchainExecutor | None = None,
+    ) -> bool:
         """Testnet simple path: make account trade-ready.
 
         1) clear KILL locks
         2) market-close live POS/ORD
         3) free local stuck cycle if API flat
         Returns True if account has no open POS/ORD (ready for new rounds).
+        Pass ``client``/``chain`` when the farm already holds the signer —
+        ``_write_chain`` would otherwise wipe the vault key.
         """
 
         scope = account.label
@@ -679,7 +687,8 @@ class WalletOperations:
         except Exception:
             pass
 
-        client = self._client(account)
+        if client is None:
+            client = self._client(account)
         remote = self._remote(client, account.address)
         active = self.store.get_active_cycle(account.address)
         if not remote.positions and not remote.active_orders:
@@ -700,13 +709,15 @@ class WalletOperations:
             scope=scope,
         )
         try:
-            chain = self._write_chain(account, client)
-            chain.verify_deployment()
+            write = chain
+            if write is None:
+                write = self._write_chain(account, client)
+            write.verify_deployment()
             for tol in (200, 300, 500):
                 self._direct_market_reduce_all(
                     account=account,
                     client=client,
-                    chain=chain,
+                    chain=write,
                     tolerance_bps=tol,
                 )
                 after = self._remote(client, account.address)

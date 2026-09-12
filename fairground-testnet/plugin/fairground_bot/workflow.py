@@ -59,6 +59,7 @@ TERMINAL_ORDER_STATUSES = {
 # projections.  Do not interpret an initially empty position projection as a
 # proven zero-fill/flat account until it has remained empty for this interval.
 POST_ENTRY_INDEXING_GRACE_SECONDS = 30
+REMOTE_INDEX_GRACE_SECONDS = 45
 POSITION_VERIFY_TIMEOUT_SECONDS = 90
 PREFLIGHT_VALIDATION_PREFIX = "Preflight validation rejected: "
 # Testnet volume farm: keep gas headroom tight so small ETH balances still trade.
@@ -618,10 +619,16 @@ class CycleRunner:
             )
         remote = self._remote()
         if remote.active_orders or remote.positions:
-            return self._quarantine(
-                record,
-                "Account must be globally flat with no active orders before a new cycle",
-            )
+            wait_from = self.wall_clock()
+            while remote.active_orders or remote.positions:
+                self._heartbeat()
+                if self.wall_clock() - wait_from >= REMOTE_INDEX_GRACE_SECONDS:
+                    return self._quarantine(
+                        record,
+                        "Account must be globally flat with no active orders before a new cycle",
+                    )
+                self.sleep(intent.poll_seconds)
+                remote = self._remote()
         market = self._market_config(intent)
         tick_decimals = _bounded_int(
             market.get("tickDecimals"), "tickDecimals", 0, 12
@@ -1395,12 +1402,46 @@ class CycleRunner:
             )
         raise WorkflowNeedsReconciliation("Entry cancellation/fill has not indexed to terminal state")
 
+    def _stale_hold_orders(
+        self, remote: RemoteSnapshot, record: CycleRecord, intent: TradeCycleIntent
+    ) -> tuple[OrderView, ...]:
+        """Orders that are not just the filled entry still sitting in GetOrders."""
+
+        try:
+            entry_id = int(record.runtime.get("entry_order_id") or 0)
+        except (TypeError, ValueError):
+            entry_id = 0
+        want_side = intent.side.upper()
+        stray: list[OrderView] = []
+        for order in remote.active_orders:
+            if order.terminal:
+                continue
+            if entry_id and order.order_id == entry_id:
+                continue
+            if (
+                not entry_id
+                and not order.reduce_only
+                and order.market_id == intent.market_id
+                and order.side == want_side
+            ):
+                continue
+            stray.append(order)
+        return tuple(stray)
+
     def _holding(self, record: CycleRecord, intent: TradeCycleIntent) -> CycleRecord:
+        stray_since: float | None = None
         while True:
             self._heartbeat()
             remote = self._remote()
-            if remote.active_orders:
+            stray = self._stale_hold_orders(remote, record, intent)
+            if stray:
+                if stray_since is None:
+                    stray_since = self.wall_clock()
+                if self.wall_clock() - stray_since < REMOTE_INDEX_GRACE_SECONDS:
+                    self.sleep(intent.poll_seconds)
+                    continue
                 return self._quarantine(record, "Unexpected active order while holding")
+            stray_since = None
             try:
                 position = self._matching_position(remote, intent)
             except WorkflowError as exc:

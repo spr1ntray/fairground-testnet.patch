@@ -415,6 +415,142 @@ class ManifestTests(unittest.TestCase):
         )
 
 
+class HoldingLagTests(unittest.TestCase):
+    def _order(self, **overrides: object):
+        from plugin.fairground_bot.workflow import OrderView
+
+        payload = {
+            "order_id": 11,
+            "market_id": "1",
+            "owner": None,
+            "side": "LONG",
+            "status": "PENDING",
+            "reduce_only": False,
+            "threshold_price": Decimal("1"),
+            "size": Decimal("1"),
+            "filled_size": Decimal("1"),
+            "initial_margin": Decimal("1"),
+            "initial_notional": Decimal("10"),
+        }
+        payload.update(overrides)
+        return OrderView(**payload)
+
+    def _intent(self):
+        from plugin.fairground_bot.workflow import TradeCycleIntent
+
+        return TradeCycleIntent.from_values(
+            market_id="1",
+            market_name="SOL-USD",
+            side="long",
+            margin="10",
+            leverage="10",
+            limit_price="100",
+        )
+
+    def test_filled_entry_without_id_is_not_stray(self) -> None:
+        from plugin.fairground_bot.workflow import CycleRunner, RemoteSnapshot
+
+        runner = CycleRunner.__new__(CycleRunner)
+        record = type("R", (), {"runtime": {}})()
+        remote = RemoteSnapshot(orders=(self._order(),), positions=())
+        self.assertEqual(
+            runner._stale_hold_orders(remote, record, self._intent()),
+            (),
+        )
+
+    def test_entry_order_id_is_ignored_even_on_other_market(self) -> None:
+        from plugin.fairground_bot.workflow import CycleRunner, RemoteSnapshot
+
+        runner = CycleRunner.__new__(CycleRunner)
+        record = type("R", (), {"runtime": {"entry_order_id": 11}})()
+        remote = RemoteSnapshot(
+            orders=(self._order(market_id="9"),),
+            positions=(),
+        )
+        self.assertEqual(
+            runner._stale_hold_orders(remote, record, self._intent()),
+            (),
+        )
+
+    def test_other_market_order_is_stray_when_entry_id_missing(self) -> None:
+        from plugin.fairground_bot.workflow import CycleRunner, RemoteSnapshot
+
+        runner = CycleRunner.__new__(CycleRunner)
+        record = type("R", (), {"runtime": {}})()
+        remote = RemoteSnapshot(
+            orders=(self._order(market_id="2"),),
+            positions=(),
+        )
+        stray = runner._stale_hold_orders(remote, record, self._intent())
+        self.assertEqual(len(stray), 1)
+        self.assertEqual(stray[0].market_id, "2")
+
+    def test_holding_waits_out_stray_then_exits(self) -> None:
+        from plugin.fairground_bot.state import CycleState
+        from plugin.fairground_bot.workflow import (
+            CycleRunner,
+            PositionView,
+            REMOTE_INDEX_GRACE_SECONDS,
+            RemoteSnapshot,
+        )
+
+        runner = CycleRunner.__new__(CycleRunner)
+        clock = {"t": 0.0}
+        snaps = [
+            RemoteSnapshot(
+                orders=(self._order(order_id=99, market_id="2"),),
+                positions=(
+                    PositionView(
+                        position_id=7,
+                        market_id="1",
+                        side="LONG",
+                        nominal_size=Decimal("1"),
+                    ),
+                ),
+            ),
+            RemoteSnapshot(
+                orders=(),
+                positions=(
+                    PositionView(
+                        position_id=7,
+                        market_id="1",
+                        side="LONG",
+                        nominal_size=Decimal("1"),
+                    ),
+                ),
+            ),
+        ]
+        runner.wall_clock = lambda: clock["t"]
+        runner.sleep = lambda seconds: clock.__setitem__("t", clock["t"] + float(seconds))
+        runner._heartbeat = lambda: None
+        runner._kill = lambda: None
+
+        def _remote():
+            if len(snaps) > 1:
+                return snaps.pop(0)
+            return snaps[0]
+
+        runner._remote = _remote
+        runner._matching_position = lambda remote, intent: remote.positions[0]
+        captured: list[object] = []
+
+        class Store:
+            def transition(self, record, state, runtime_updates=None, error=None):
+                captured.append(state)
+                return record
+
+        runner.store = Store()
+        record = type(
+            "R",
+            (),
+            {"runtime": {"hold_deadline": 0.0}, "state": CycleState.HOLDING},
+        )()
+        out = runner._holding(record, self._intent())
+        self.assertIs(out, record)
+        self.assertEqual(captured, [CycleState.EXIT_ARMED])
+        self.assertLess(clock["t"], REMOTE_INDEX_GRACE_SECONDS)
+
+
 class BrowserHelperTests(unittest.TestCase):
     def test_extension_url(self) -> None:
         self.assertTrue(is_extension_url("chrome-extension://abc/notification.html"))
