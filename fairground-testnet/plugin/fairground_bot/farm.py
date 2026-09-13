@@ -48,6 +48,7 @@ from .workflow import (
 
 
 MARGIN_QUANTUM = Decimal("0.000001")
+MIN_GAS_WEI = 3_000_000_000_000_000  # 0.003 ETH — ниже клеймим QuickNode
 LEVERAGE_QUANTUM = Decimal("0.01")
 PERCENT_DENOMINATOR = Decimal("100")
 PERCENT_DISPLAY_QUANTUM = Decimal("0.01")
@@ -1154,6 +1155,39 @@ class VolumeFarm:
         self._ads_api_key = str(api_key or "")
         self._ads_password = str(password or "")
 
+    def _eth_balance_wei(self, account: FarmAccount) -> int:
+        client = self._client_for(account)
+        chain = self._read_executor_for(account, client)
+        return int(chain.w3.eth.get_balance(account.address))
+
+    def _ensure_gas(self, account: FarmAccount, trader: Any) -> None:
+        try:
+            wei = self._eth_balance_wei(account)
+        except Exception as exc:
+            self.log(f"[!] {account.label} | gas read · {type(exc).__name__}")
+            return
+        if wei >= MIN_GAS_WEI:
+            self.log(f"[•] {account.label} | gas {wei / 10**18:.5f} ETH")
+            return
+        self.log(
+            f"[•] {account.label} | gas {wei / 10**18:.5f} ETH · кран QuickNode 0.05"
+        )
+        try:
+            trader.claim_sepolia_eth(account.address)
+        except Exception as exc:
+            self.log(f"[!] {account.label} | кран · {type(exc).__name__}")
+        self.sleep(6.0)
+        try:
+            after = self._eth_balance_wei(account)
+        except Exception:
+            after = wei
+        if after > wei:
+            self.log(f"[✓] {account.label} | кран · {after / 10**18:.5f} ETH")
+            return
+        self.log(
+            f"[!] {account.label} | газа мало ({after / 10**18:.5f} ETH) — пробую круги"
+        )
+
     def _exposure_count(self, client: FairgroundClient, address: str) -> int:
         try:
             raw = client.get_open_positions(address).get("positions")
@@ -1197,6 +1231,7 @@ class VolumeFarm:
         result: AccountFarmResult,
     ) -> None:
         if self._trader is not None:
+            self._ensure_gas(account, self._trader)
             self._drive_browser_rounds(
                 trader=self._trader,
                 account=account,
@@ -1225,6 +1260,7 @@ class VolumeFarm:
                 cancel_check=self._cancel_check,
             ) as trader:
                 trader.warm(session)
+                self._ensure_gas(account, trader)
                 self._drive_browser_rounds(
                     trader=trader,
                     account=account,
@@ -1268,7 +1304,7 @@ class VolumeFarm:
                 side = "short"
             if not self.farm.allow_short:
                 side = "long"
-            percent = pick_percent(session, 10, 50)
+            percent = pick_percent(session, 10, 75)
             hold = (
                 session_hold_seconds(session, self.farm.hold_seconds)
                 if session is not None

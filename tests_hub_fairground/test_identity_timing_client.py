@@ -508,10 +508,21 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(farm_conc["minimum"], 1)
         inspect = next(action for action in manifest["actions"] if action["id"] == "inspect")
         self.assertNotIn("adspower_profile", inspect["resources"]["account"])
-        from plugin.fairground_bot.browser_trade import PLACE_ORDER_BUTTONS, CLOSE_POSITION_BUTTONS
+        from plugin.fairground_bot.browser_trade import (
+            CLOSE_POSITION_BUTTONS,
+            CURRENT_PRICE_BUTTONS,
+            FAUCET_URL,
+            PERCENT_CHIPS,
+            PLACE_ORDER_BUTTONS,
+        )
 
         self.assertTrue(any("Place order" in item for item in PLACE_ORDER_BUTTONS))
         self.assertTrue(any("Close position" in item for item in CLOSE_POSITION_BUTTONS))
+        self.assertTrue(any("Current price" in item for item in CURRENT_PRICE_BUTTONS))
+        self.assertIn(75, PERCENT_CHIPS)
+        self.assertIn(100, PERCENT_CHIPS)
+        self.assertIn("faucet.quicknode.com/arbitrum/sepolia", FAUCET_URL)
+        self.assertIn("faucet.quicknode.com", manifest["permissions"]["network"])
         point_col = next(col for col in inspect["output"]["columns"] if col["key"] == "points")
         self.assertEqual(point_col["title"], "Поинты")
         self.assertEqual(point_col["type"], "integer")

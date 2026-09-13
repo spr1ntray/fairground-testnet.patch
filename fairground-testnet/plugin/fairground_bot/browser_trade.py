@@ -100,9 +100,10 @@ ALERT_BUTTONS = (
     'button:has-text("Proceed anyway")',
     'button:has-text("Ignore")',
 )
-PERCENT_CHIPS = (10, 25, 50, 75)
+PERCENT_CHIPS = (10, 25, 50, 75, 100)
 PLACE_ORDER_BUTTONS = (
     'button:has-text("Place order")',
+    'button:has-text("Submitting order")',
 )
 CLOSE_POSITION_BUTTONS = (
     'button:has-text("Close position")',
@@ -110,11 +111,32 @@ CLOSE_POSITION_BUTTONS = (
 CONFIRM_DIALOG_BUTTONS = (
     'button:has-text("Confirm")',
 )
+CURRENT_PRICE_BUTTONS = (
+    'button:has-text("Current price")',
+    'text=Current price',
+)
 MARKET_ORDER_BUTTONS = (
     'button:has-text("Market")',
+    *CURRENT_PRICE_BUTTONS,
 )
 MAX_BUTTONS = (
     'button:has-text("Max")',
+    'button:has-text("100%")',
+)
+POSITION_ROW_CLOSE = (
+    'table tbody tr button >> nth=-2',
+)
+FAUCET_URL = "https://faucet.quicknode.com/arbitrum/sepolia"
+FAUCET_SEND_BUTTONS = (
+    'button:has-text("Send to")',
+    'button:has-text("0.05")',
+)
+FAUCET_CONTINUE = (
+    'button:has-text("Continue")',
+)
+FAUCET_CONNECT = (
+    'button:has-text("Connect Wallet")',
+    'button:has-text("Connect wallet")',
 )
 LogFn = Callable[[str], None]
 CancelCheck = Callable[[], None] | None
@@ -383,12 +405,17 @@ class BrowserTrader:
             self.log(f"Нет кнопки {side_label}")
             return False
         self._sleep(0.25, 0.7)
-        self._click_first(page, MARKET_ORDER_BUTTONS, timeout_ms=2000)
+        self._click_first(page, CURRENT_PRICE_BUTTONS, timeout_ms=2000)
+        self._click_first(page, MARKET_ORDER_BUTTONS, timeout_ms=1500)
         self._sleep(0.2, 0.5)
         chip = f"{int(percent)}%"
         if not self._click_first(page, (f'button:has-text("{chip}")',), timeout_ms=2500):
             self._click_first(page, MAX_BUTTONS, timeout_ms=1600)
         self._sleep(0.4, 1.0)
+        if self._click_first(page, ('button:has-text("Enter amount")',), timeout_ms=800):
+            self.log("Enter amount — чип не проставил размер, пробую 25%")
+            self._click_first(page, ('button:has-text("25%")',), timeout_ms=2000)
+            self._sleep(0.3, 0.7)
         if not self._click_first(page, PLACE_ORDER_BUTTONS, timeout_ms=4500):
             self.log("Нет Place order")
             return False
@@ -412,7 +439,10 @@ class BrowserTrader:
 
         self._cancel()
         page = self._need_page()
-        if not self._click_first(page, CLOSE_POSITION_BUTTONS, timeout_ms=4500):
+        closed_ui = self._click_first(page, CLOSE_POSITION_BUTTONS, timeout_ms=2500)
+        if not closed_ui:
+            closed_ui = self._click_position_row_x(page)
+        if not closed_ui:
             self.log("Нет Close position")
             return False
         self.log("Close position")
@@ -431,6 +461,109 @@ class BrowserTrader:
             self._sleep(0.6, 1.1)
         self.closed += 1
         return True
+
+    def _click_position_row_x(self, page: Any) -> bool:
+        try:
+            rows = page.locator("table tbody tr")
+            if rows.count() == 0:
+                return False
+            buttons = rows.first.locator("button")
+            n = buttons.count()
+            if n < 1:
+                return False
+            target = buttons.nth(n - 2 if n >= 2 else 0)
+            if target.is_visible():
+                target.click(timeout=2000)
+                return True
+        except Exception:
+            return False
+        return False
+
+    def claim_sepolia_eth(self, address: str) -> bool:
+        """QuickNode Arbitrum Sepolia faucet, 0.05 ETH, same Ads tab set."""
+
+        self._cancel()
+        context = self._context
+        if context is None:
+            return False
+        page = context.new_page()
+        try:
+            page.goto(FAUCET_URL, wait_until="domcontentloaded", timeout=self.page_timeout_ms)
+            self._sleep(0.8, 1.4)
+            body = ""
+            try:
+                body = (page.inner_text("body", timeout=2500) or "").lower()
+            except Exception:
+                body = ""
+            if "come back" in body or "12 hours" in body:
+                self.log("Кран: лимит 12 часов")
+                return False
+            if self._click_first(page, FAUCET_CONNECT, timeout_ms=2500):
+                self.log("Кран: Connect Wallet")
+                self._sleep(0.4, 0.8)
+                self.confirm_rabby(timeout=18)
+                self._sleep(0.6, 1.2)
+            try:
+                field = page.locator('input[placeholder*="0x"]').first
+                if field.count() > 0 and field.is_visible():
+                    current = field.input_value(timeout=1500) or ""
+                    if len(current) < 10:
+                        field.fill(address, timeout=2500)
+            except Exception:
+                pass
+            try:
+                page.get_by_text("Arbitrum", exact=True).first.click(timeout=1500)
+            except Exception:
+                pass
+            try:
+                page.get_by_text("Sepolia", exact=True).first.click(timeout=1500)
+            except Exception:
+                pass
+            if self._click_first(page, FAUCET_CONTINUE, timeout_ms=3000):
+                self.log("Кран: Continue")
+                self._sleep(0.6, 1.2)
+            body = ""
+            try:
+                body = (page.inner_text("body", timeout=2500) or "").lower()
+            except Exception:
+                body = ""
+            if "come back" in body or "12 hours" in body:
+                self.log("Кран: лимит 12 часов")
+                return False
+            if not self._click_first(page, FAUCET_SEND_BUTTONS, timeout_ms=4000):
+                self.log("Кран: нет кнопки Send 0.05")
+                return False
+            self.log("Кран: Send 0.05 ETH")
+            self._sleep(0.4, 0.8)
+            self.confirm_rabby(timeout=12)
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                self._cancel()
+                try:
+                    text = (page.inner_text("body", timeout=1500) or "").lower()
+                except Exception:
+                    text = ""
+                if "transaction completed" in text or "transfer completed" in text:
+                    self.log("Кран: ETH отправлен")
+                    return True
+                if "come back" in text:
+                    self.log("Кран: лимит 12 часов")
+                    return False
+                self._sleep(1.2, 2.0)
+            self.log("Кран: не дождался Transfer Completed")
+            return False
+        except Exception as exc:
+            self.log(f"Кран: {type(exc).__name__}")
+            return False
+        finally:
+            try:
+                page.close()
+            except Exception:
+                pass
+            try:
+                self._site_page().bring_to_front()
+            except Exception:
+                pass
 
     def unlock_rabby(self) -> None:
         if not self.password:
