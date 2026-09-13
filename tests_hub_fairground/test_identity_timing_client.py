@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from plugin.fairground_bot.client import (
+    FairgroundAPIError,
     FairgroundClient,
     current_season_id_from_payload,
     decode_http_body,
@@ -239,21 +240,39 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(decode_http_body(b'{"ok":true}', "gzip"), b'{"ok":true}')
 
     def test_season_points_come_from_incentives_total_score(self) -> None:
+        owner = "0x0000000000000000000000000000000000000001"
         self.assertEqual(
             season_points_from_payload(
                 {
-                    "data": {
-                        "owner": "0xabc",
-                        "earned_xp": 7,
-                        "total_score": 12,
-                        "season_id": 331,
-                    }
-                }
+                    "data": [
+                        {
+                            "owner": "0x0000000000000000000000000000000000000001",
+                            "earned_xp": 7,
+                            "total_score": 12,
+                            "season_id": 331,
+                        }
+                    ]
+                },
+                owner=owner,
             ),
             12,
         )
-        self.assertEqual(season_points_from_payload({}), 0)
-        self.assertEqual(season_points_from_payload({"data": {}}), 0)
+        self.assertEqual(season_points_from_payload({"data": []}, owner=owner), 0)
+        self.assertEqual(season_points_from_payload({}, owner=owner), 0)
+        self.assertEqual(
+            season_points_from_payload(
+                {
+                    "data": [
+                        {
+                            "owner": "0x0000000000000000000000000000000000000002",
+                            "total_score": 99,
+                        }
+                    ]
+                },
+                owner=owner,
+            ),
+            0,
+        )
         self.assertEqual(
             current_season_id_from_payload(
                 {"data": {"current": {"id": 331, "number": 3}}}
@@ -277,10 +296,10 @@ class ClientTests(unittest.TestCase):
             )
             if request.full_url.endswith("/api/v1/seasons/current"):
                 return 200, b'{"data":{"current":{"id":331,"number":3}}}'
-            if "/api/v1/user_scores/" in request.full_url:
+            if "/api/v1/user_scores?" in request.full_url and "owner=" in request.full_url:
                 return 200, (
-                    b'{"data":{"owner":"0x0000000000000000000000000000000000000001",'
-                    b'"earned_xp":7,"total_score":12,"season_id":331}}'
+                    b'{"data":[{"owner":"0x0000000000000000000000000000000000000001",'
+                    b'"earned_xp":7,"total_score":12,"season_id":331}]}'
                 )
             raise AssertionError(request.full_url)
 
@@ -303,11 +322,13 @@ class ClientTests(unittest.TestCase):
         self.assertTrue(all(item["method"] == "GET" for item in captured))
         self.assertTrue(all(item["data"] is None for item in captured))
         scores = captured[1]
-        self.assertEqual(
+        self.assertIn(
+            "https://incentives.fairground.fi/api/v1/user_scores?",
             scores["url"],
-            "https://incentives.fairground.fi/api/v1/user_scores/"
-            "0x0000000000000000000000000000000000000001?season_id=331",
         )
+        self.assertIn("owner=0x0000000000000000000000000000000000000001", scores["url"])
+        self.assertIn("season_id=331", scores["url"])
+        self.assertNotIn("/user_scores/0x", scores["url"])
         self.assertEqual(scores["headers"]["origin"], "https://fairground.fi")
         self.assertNotIn("content-type", scores["headers"])
         self.assertNotIn("connect-protocol-version", scores["headers"])
@@ -318,13 +339,30 @@ class ClientTests(unittest.TestCase):
         FairgroundClient._season_id = 331
 
         def transport(request, timeout):
-            return 404, b'{"errors":{"message":"Not Found"}}'
+            return 200, b'{"data":[],"pagination":{"total_count":0}}'
 
         points = FairgroundClient(
             "https://api.fairground.fi",
             transport=transport,
         ).get_season_points("0x0000000000000000000000000000000000000001")
         self.assertEqual(points, 0)
+        FairgroundClient._season_id = None
+
+    def test_privy_gated_user_score_path_is_not_used(self) -> None:
+        FairgroundClient._season_id = 331
+        urls: list[str] = []
+
+        def transport(request, timeout):
+            urls.append(request.full_url)
+            return 401, b'{"errors":{"message":"Unauthorized"}}'
+
+        with self.assertRaises(FairgroundAPIError):
+            FairgroundClient(
+                "https://api.fairground.fi",
+                transport=transport,
+            ).get_season_points("0x0000000000000000000000000000000000000001")
+        self.assertTrue(urls)
+        self.assertTrue(all("/user_scores?" in url and "owner=" in url for url in urls))
         FairgroundClient._season_id = None
 
     def test_browser_fetch_transport(self) -> None:

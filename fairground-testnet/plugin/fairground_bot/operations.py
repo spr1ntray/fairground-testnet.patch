@@ -218,7 +218,11 @@ class WalletOperations:
             points = 0
             try:
                 points = client.get_season_points(account.address)
-            except (FairgroundAPIError, TypeError, ValueError):
+            except (FairgroundAPIError, TypeError, ValueError) as exc:
+                self.log.warning(
+                    f"{account.label}: поинты недоступны · {exc}",
+                    scope=account.label,
+                )
                 points = 0
             active = self.store.get_active_cycle(account.address)
             kill = self.store.get_kill(account.address)

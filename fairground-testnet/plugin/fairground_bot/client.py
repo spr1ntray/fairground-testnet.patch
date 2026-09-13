@@ -19,7 +19,7 @@ from urllib.request import (
 )
 
 from .identity import BrowserIdentity, default_identity
-from .validation import normalize_address, normalize_market_id
+from .validation import ValidationError, normalize_address, normalize_market_id
 
 
 class FairgroundAPIError(RuntimeError):
@@ -45,10 +45,25 @@ def current_season_id_from_payload(payload: dict[str, Any]) -> int:
     return season_id
 
 
-def season_points_from_payload(payload: dict[str, Any]) -> int:
+def season_points_from_payload(
+    payload: dict[str, Any], *, owner: str | None = None
+) -> int:
     data = payload.get("data")
+    if isinstance(data, list):
+        if not data or not isinstance(data[0], dict):
+            return 0
+        data = data[0]
     if not isinstance(data, dict):
         return 0
+    if owner:
+        raw_owner = data.get("owner")
+        if not isinstance(raw_owner, str):
+            return 0
+        try:
+            if normalize_address(raw_owner) != normalize_address(owner):
+                return 0
+        except ValidationError:
+            return 0
     raw = data.get("total_score")
     if raw in (None, ""):
         return 0
@@ -403,11 +418,11 @@ class FairgroundClient:
         if sid <= 0:
             raise FairgroundAPIError("Invalid season id")
         payload = self._incentives_get(
-            f"/api/v1/user_scores/{owner}?season_id={sid}"
+            f"/api/v1/user_scores?owner={owner}&season_id={sid}&page=1&page_size=1"
         )
         if not payload:
             return 0
-        return season_points_from_payload(payload)
+        return season_points_from_payload(payload, owner=owner)
 
     def get_markets(self) -> dict[str, Any]:
         return self._post("/market_service.v1.MarketService/GetMarkets", {})
