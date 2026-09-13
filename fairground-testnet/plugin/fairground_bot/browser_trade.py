@@ -392,16 +392,23 @@ class BrowserTrader:
                 blocked.add(market)
                 continue
 
-    def place_market(self, *, market: str, side: str, percent: int) -> bool:
+    def place_market(
+        self, *, market: str, side: str, percent: int, market_id: str = ""
+    ) -> bool:
         """Click market / side / size / Place order, then sign in Rabby."""
 
         self._cancel()
-        if not self.select_market(market):
+        if not self.select_market(market, market_id=market_id):
             self.log(f"Рынок {market} недоступен")
             return False
         page = self._need_page()
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        self._sleep(0.2, 0.4)
         side_label = "Long" if str(side).lower() == "long" else "Short"
-        if not self._click_first(page, (f'button:has-text("{side_label}")',), timeout_ms=3500):
+        if not self._click_role(page, side_label):
             self.log(f"Нет кнопки {side_label}")
             return False
         self._sleep(0.25, 0.7)
@@ -412,11 +419,7 @@ class BrowserTrader:
         if not self._click_first(page, (f'button:has-text("{chip}")',), timeout_ms=2500):
             self._click_first(page, MAX_BUTTONS, timeout_ms=1600)
         self._sleep(0.4, 1.0)
-        if self._click_first(page, ('button:has-text("Enter amount")',), timeout_ms=800):
-            self.log("Enter amount — чип не проставил размер, пробую 25%")
-            self._click_first(page, ('button:has-text("25%")',), timeout_ms=2000)
-            self._sleep(0.3, 0.7)
-        if not self._click_first(page, PLACE_ORDER_BUTTONS, timeout_ms=4500):
+        if not self._wait_place_order(page, percent):
             self.log("Нет Place order")
             return False
         self.log(f"Place order · {market} {side_label} {chip}")
@@ -753,58 +756,107 @@ class BrowserTrader:
             return True
         return False
 
-    def select_market(self, market: str) -> bool:
+    def select_market(self, market: str, market_id: str = "") -> bool:
         page = self._need_page()
         symbol = market.split("-", 1)[0]
-        if self._click_first(
+        if market_id:
+            target = f"{SITE}?marketId={market_id}"
+            current = ""
+            try:
+                current = page.url or ""
+            except Exception:
+                current = ""
+            if f"marketId={market_id}" not in current:
+                page.goto(target, wait_until="domcontentloaded", timeout=self.page_timeout_ms)
+                self._sleep(0.8, 1.6)
+            if f"marketId={market_id}" in (page.url or "") or self._header_has_symbol(symbol):
+                return True
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        opened = self._click_first(
             page,
             (
                 f'button:has-text("{market}")',
                 f'button:has-text("{symbol}-USD")',
-                f'button:has-text("{symbol}")',
             ),
             timeout_ms=2500,
-        ):
-            self._sleep(0.3, 0.8)
-        search = None
+        )
+        if opened:
+            self._sleep(0.25, 0.6)
         try:
             search = page.get_by_placeholder("Search")
-            if search.count() == 0:
-                search = None
-        except Exception:
-            search = None
-        if search is None:
-            # Dropdown already open from the pair button; try the row.
-            pass
-        else:
-            try:
-                search.fill(symbol, timeout=3000)
+            if search.count() > 0:
+                search.first.fill(symbol, timeout=3000)
                 self._sleep(0.25, 0.6)
+        except Exception:
+            pass
+        try:
+            row = page.get_by_text(f"{symbol}-USD", exact=True).first
+            row.wait_for(state="visible", timeout=4000)
+            row_text = (row.inner_text(timeout=1500) or "").lower()
+            try:
+                tr = row.locator("xpath=ancestor::tr[1]")
+                if tr.count() > 0:
+                    row_text = (tr.inner_text(timeout=1500) or row_text).lower()
             except Exception:
                 pass
-        row = page.locator(f'text=/^{symbol}-USD$/').first
-        try:
-            if row.count() == 0:
-                row = page.get_by_text(f"{symbol}-USD", exact=True).first
-            row.wait_for(state="visible", timeout=4000)
-            parent = row.locator("xpath=ancestor::*[self::button or self::tr or self::div][1]")
-            body = ""
-            try:
-                body = (parent.inner_text(timeout=1500) or "").lower()
-            except Exception:
-                body = (row.inner_text(timeout=1500) or "").lower()
-            if "market closed" in body or "closed" in body and "usd" in body:
+            if "market closed" in row_text:
                 page.keyboard.press("Escape")
                 return False
             row.click(timeout=3000)
-            self._sleep(0.6, 1.3)
-            return True
+            self._sleep(0.5, 1.1)
         except Exception:
             try:
                 page.keyboard.press("Escape")
             except Exception:
                 pass
-            return symbol.lower() in (self._body().lower())
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        return self._header_has_symbol(symbol)
+
+    def _header_has_symbol(self, symbol: str) -> bool:
+        needle = f"{symbol}-USD".lower()
+        try:
+            page = self._need_page()
+            header = page.locator("header").inner_text(timeout=1500) or ""
+            if needle in header.lower():
+                return True
+        except Exception:
+            pass
+        body = self._body().lower()
+        # Header pair is enough; do not treat a closed FX row as success.
+        return needle in body[:800]
+
+    def _click_role(self, page: Any, name: str, timeout_ms: int = 3000) -> bool:
+        try:
+            btn = page.get_by_role("button", name=name, exact=True)
+            if btn.count() > 0 and btn.first.is_visible():
+                btn.first.click(timeout=timeout_ms)
+                return True
+        except Exception:
+            pass
+        return self._click_first(page, (f'button:has-text("{name}")',), timeout_ms)
+
+    def _wait_place_order(self, page: Any, percent: int) -> bool:
+        chip = f"{int(percent)}%"
+        for _ in range(8):
+            self._cancel()
+            if self._click_role(page, "Place order", timeout_ms=1200):
+                return True
+            try:
+                enter = page.get_by_role("button", name="Enter amount", exact=True)
+                if enter.count() > 0 and enter.first.is_visible():
+                    self._click_role(page, chip, timeout_ms=1500) or self._click_first(
+                        page, (f'button:has-text("{chip}")',), timeout_ms=1500
+                    )
+            except Exception:
+                self._click_first(page, (f'button:has-text("{chip}")',), timeout_ms=1500)
+            self._sleep(0.25, 0.5)
+        return self._click_first(page, PLACE_ORDER_BUTTONS, timeout_ms=2000)
 
     def confirm_rabby(self, timeout: float = 8) -> int:
         clicks = 0

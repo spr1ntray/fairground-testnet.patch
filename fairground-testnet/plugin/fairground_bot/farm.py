@@ -13,6 +13,8 @@ from typing import Any, Callable
 from .accounts import AccountError, FarmAccount
 from .client import FairgroundAPIError, FairgroundClient
 from .config import Settings
+from web3 import Web3
+
 from .onchain import OnchainError, OnchainExecutor, SimulationError
 from .operations import WalletOperations
 from .proxy import ProxyError
@@ -1155,10 +1157,27 @@ class VolumeFarm:
         self._ads_api_key = str(api_key or "")
         self._ads_password = str(password or "")
 
+    def _pick_browser_market(
+        self, session: SessionStyle | None, excluded: set[str]
+    ) -> tuple[str, str]:
+        pool: list[tuple[str, str]] = []
+        catalog = self._catalog
+        if catalog is not None:
+            pool = [
+                (item.market_id, item.market_name)
+                for item in catalog.markets
+                if item.market_name not in excluded
+            ]
+        if pool:
+            rng = session.rng if session is not None else None
+            picked = rng.choice(pool) if rng is not None else choice(pool)
+            return str(picked[0]), str(picked[1])
+        return "", pick_market(session, excluded)
+
     def _eth_balance_wei(self, account: FarmAccount) -> int:
         client = self._client_for(account)
         chain = self._read_executor_for(account, client)
-        return int(chain.w3.eth.get_balance(account.address))
+        return int(chain.w3.eth.get_balance(Web3.to_checksum_address(account.address)))
 
     def _ensure_gas(self, account: FarmAccount, trader: Any) -> None:
         try:
@@ -1296,7 +1315,7 @@ class VolumeFarm:
         for round_index in range(first_new_round, planned + 1):
             if self._cancel_check is not None:
                 self._cancel_check()
-            market = pick_market(session, excluded)
+            market_id, market = self._pick_browser_market(session, excluded)
             side = "long"
             if session is not None:
                 side = "long" if session.rng.random() < session.long_bias else "short"
@@ -1316,7 +1335,9 @@ class VolumeFarm:
                 f"hold={hold}s · Ads UI / Rabby"
             )
             try:
-                placed = trader.place_market(market=market, side=side, percent=percent)
+                placed = trader.place_market(
+                    market=market, side=side, percent=percent, market_id=market_id
+                )
             except Exception as exc:
                 self.log(
                     f"[!] {account.label} | Place order · {type(exc).__name__}: {exc}"
@@ -1379,14 +1400,8 @@ class VolumeFarm:
                 self.log(
                     f"[•] {account.label} | WAIT · {pause:.1f}s до следующего round"
                 )
-        try:
-            portfolio = client.get_portfolio(account.address).get("portfolio")
-            if isinstance(portfolio, dict):
-                result.volume_notional_estimate = str(
-                    portfolio.get("totalVolume") or result.volume_notional_estimate or "0"
-                )
-        except (FairgroundAPIError, TypeError, ValueError):
-            pass
+        if result.completed_trades <= 0:
+            result.volume_notional_estimate = "0"
 
     def _waitlist_for(
         self, client: FairgroundClient, account: FarmAccount, usdc_units: int

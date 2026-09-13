@@ -523,6 +523,10 @@ class ManifestTests(unittest.TestCase):
         self.assertIn(100, PERCENT_CHIPS)
         self.assertIn("faucet.quicknode.com/arbitrum/sepolia", FAUCET_URL)
         self.assertIn("faucet.quicknode.com", manifest["permissions"]["network"])
+        from plugin.fairground_bot.browser_trade import SITE
+
+        self.assertTrue(SITE.endswith("/421614"))
+        self.assertIn("marketId=", f"{SITE}?marketId=1")
         point_col = next(col for col in inspect["output"]["columns"] if col["key"] == "points")
         self.assertEqual(point_col["title"], "Поинты")
         self.assertEqual(point_col["type"], "integer")
