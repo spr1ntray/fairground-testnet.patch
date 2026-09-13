@@ -223,7 +223,9 @@ def _run_account(
         if overview.waitlisted is False and not overview.error:
             message = "Не в waitlist"
         else:
-            message = overview.error or f"USDC {data['usdc']} · объём {data['volume']}"
+            message = overview.error or (
+                f"USDC {data['usdc']} · объём {data['volume']} · поинты {data['points']}"
+            )
         _terminal(context, hub, status, "completed" if status == "succeeded" else "inspect_failed", message)
         return status
 
@@ -507,6 +509,7 @@ def _overview_data(overview: Any) -> dict[str, Any]:
         "positions": int(overview.open_positions),
         "orders": int(overview.active_orders),
         "waitlist": overview.waitlisted,
+        "points": int(getattr(overview, "points", 0) or 0),
     }
 
 

@@ -67,6 +67,7 @@ class WalletOverview:
     total_trades: int = 0
     total_fees: str = "0"
     waitlisted: bool | None = None
+    points: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +215,11 @@ class WalletOperations:
                     total_fees = str(portfolio.get("totalFees") or "0")
             except (FairgroundAPIError, TypeError, ValueError):
                 pass
+            points = 0
+            try:
+                points = client.get_season_points(account.address)
+            except (FairgroundAPIError, TypeError, ValueError):
+                points = 0
             active = self.store.get_active_cycle(account.address)
             kill = self.store.get_kill(account.address)
             required: int | None = None
@@ -278,6 +284,7 @@ class WalletOperations:
                 total_trades=total_trades,
                 total_fees=total_fees,
                 waitlisted=admission.admitted,
+                points=points,
                 cycle_state=active.state.value if active is not None else "FLAT",
                 kill_mode=kill.get("kill_mode") if kill else None,
                 gas_required_wei=required,

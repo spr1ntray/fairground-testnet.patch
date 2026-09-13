@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import gzip
 import json
+from decimal import Decimal, InvalidOperation
+from threading import Lock
 import zlib
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -22,6 +24,41 @@ from .validation import normalize_address, normalize_market_id
 
 class FairgroundAPIError(RuntimeError):
     """A sanitized error returned by the Fairground read API."""
+
+
+INCENTIVES_URL = "https://incentives.fairground.fi"
+
+
+def current_season_id_from_payload(payload: dict[str, Any]) -> int:
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise FairgroundAPIError("Fairground incentives returned no current season")
+    current = data.get("current")
+    if not isinstance(current, dict):
+        raise FairgroundAPIError("Fairground incentives returned no current season")
+    try:
+        season_id = int(current.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise FairgroundAPIError("Fairground incentives returned an invalid season") from exc
+    if season_id <= 0:
+        raise FairgroundAPIError("Fairground incentives returned an invalid season")
+    return season_id
+
+
+def season_points_from_payload(payload: dict[str, Any]) -> int:
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return 0
+    raw = data.get("total_score")
+    if raw in (None, ""):
+        return 0
+    try:
+        number = Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        return 0
+    if not number.is_finite() or number < 0:
+        return 0
+    return int(number)
 
 
 class _RawRequest(Request):
@@ -186,6 +223,8 @@ class _RawHTTPSHandler(HTTPSHandler):
 
 class FairgroundClient:
     MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+    _season_id: int | None = None
+    _season_lock = Lock()
 
     def __init__(
         self,
@@ -230,19 +269,38 @@ class FairgroundClient:
                 encoding = ""
             return response.status, decode_http_body(body, encoding)
 
-    def _urllib_post(
-        self, url: str, headers: dict[str, str], data: bytes
+    def _urllib_call(
+        self,
+        url: str,
+        headers: dict[str, str],
+        data: bytes | None,
+        method: str,
     ) -> tuple[int, bytes]:
-        request = _RawRequest(url, method="POST", data=data, headers=headers)
+        request = _RawRequest(url, method=method, data=data, headers=headers)
         transport = self._transport or self._default_transport
         try:
             return transport(request, float(self.timeout_seconds))
         except HTTPError as exc:
-            raise FairgroundAPIError(f"Fairground API returned HTTP {exc.code}") from exc
+            body = b""
+            try:
+                body = exc.read(self.MAX_RESPONSE_BYTES + 1)
+            except Exception:
+                body = b""
+            encoding = ""
+            try:
+                encoding = str(exc.headers.get("Content-Encoding") or "")
+            except Exception:
+                encoding = ""
+            return int(exc.code), decode_http_body(body, encoding)
         except (URLError, TimeoutError, OSError) as exc:
             raise FairgroundAPIError(
                 f"Fairground API is unavailable ({type(exc).__name__})"
             ) from exc
+
+    def _urllib_post(
+        self, url: str, headers: dict[str, str], data: bytes
+    ) -> tuple[int, bytes]:
+        return self._urllib_call(url, headers, data, "POST")
 
     def _with_chain(self, payload: dict[str, Any]) -> dict[str, Any]:
         body = dict(payload)
@@ -294,6 +352,62 @@ class FairgroundClient:
         if not isinstance(parsed, dict):
             raise FairgroundAPIError("Fairground API returned an unexpected payload")
         return parsed
+
+    def _get_headers(self) -> dict[str, str]:
+        headers = dict(self.identity.headers())
+        if self.cookie_header:
+            headers["Cookie"] = self.cookie_header
+        return headers
+
+    def _incentives_get(self, path: str) -> dict[str, Any]:
+        parsed_path = urlparse(path)
+        if (
+            not path.startswith("/api/v1/")
+            or ".." in path
+            or parsed_path.scheme
+            or parsed_path.netloc
+        ):
+            raise FairgroundAPIError("Unsafe incentives path")
+        url = f"{INCENTIVES_URL}{path}"
+        headers = self._get_headers()
+        status, body = self._urllib_call(url, headers, None, "GET")
+        if status == 404:
+            return {}
+        if status < 200 or status >= 300:
+            raise FairgroundAPIError(f"Fairground API returned HTTP {status}")
+        if len(body) > self.MAX_RESPONSE_BYTES:
+            raise FairgroundAPIError("Fairground API response exceeded the safety limit")
+        try:
+            parsed = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise FairgroundAPIError("Fairground API returned malformed JSON") from exc
+        if not isinstance(parsed, dict):
+            raise FairgroundAPIError("Fairground API returned an unexpected payload")
+        return parsed
+
+    def get_current_season_id(self) -> int:
+        cached = type(self)._season_id
+        if cached:
+            return cached
+        with type(self)._season_lock:
+            if type(self)._season_id:
+                return type(self)._season_id
+            payload = self._incentives_get("/api/v1/seasons/current")
+            season_id = current_season_id_from_payload(payload)
+            type(self)._season_id = season_id
+            return season_id
+
+    def get_season_points(self, address: str, *, season_id: int | None = None) -> int:
+        owner = normalize_address(address)
+        sid = int(season_id) if season_id is not None else self.get_current_season_id()
+        if sid <= 0:
+            raise FairgroundAPIError("Invalid season id")
+        payload = self._incentives_get(
+            f"/api/v1/user_scores/{owner}?season_id={sid}"
+        )
+        if not payload:
+            return 0
+        return season_points_from_payload(payload)
 
     def get_markets(self) -> dict[str, Any]:
         return self._post("/market_service.v1.MarketService/GetMarkets", {})
