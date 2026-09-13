@@ -3,12 +3,12 @@
   "contract_version": "SH-SOFTWARE-0.6/5",
   "id": "io.sprintray.fairground-testnet",
   "name": "Fairground Testnet",
-  "version": "1.7.12",
-  "description": "Сезон 3: сделки ключом Hub, браузерный отпечаток на каждый запрос.",
+  "version": "1.8.0",
+  "description": "Сезон 3: open/close в Ads, подпись Rabby.",
   "author": "sprintray",
   "presentation": {
     "display_name": "Fairground Testnet",
-    "description": "Сделки ключом Hub. Ads не нужен.",
+    "description": "Сделки в Ads через Rabby.",
     "assets": {
       "icon": "assets/icon.png",
       "image": "assets/image.png"
@@ -34,7 +34,10 @@
   "permissions": {
     "secrets": [
       "evm_private_key",
-      "proxy"
+      "proxy",
+      "adspower_profile",
+      "email_password",
+      "adspower_api_key"
     ],
     "network": [
       "fairground.fi",
@@ -47,22 +50,28 @@
     ],
     "chains": [421614],
     "financial_risk": "testnet",
-    "browser": false,
-    "local_services": []
+    "browser": true,
+    "local_services": ["adspower"]
   },
   "actions": [
     {
       "id": "farm",
       "name": "Работа",
-      "description": "Open/close ключом Hub.",
+      "description": "Open/close в профиле Ads. Подпись Rabby.",
       "risk": "testnet_write",
       "account_mode": "one_or_more",
       "permissions": {
-        "secrets": ["evm_private_key", "proxy"]
+        "secrets": [
+          "evm_private_key",
+          "proxy",
+          "adspower_profile",
+          "email_password",
+          "adspower_api_key"
+        ]
       },
       "resources": {
-        "account": ["private_key", "proxy"],
-        "settings": []
+        "account": ["private_key", "proxy", "adspower_profile", "email_password"],
+        "settings": ["adspower_api"]
       },
       "output": {
         "mode": "account_table",
@@ -82,10 +91,10 @@
           "account_concurrency": {
             "type": "integer",
             "title": "Параллельные аккаунты",
-            "description": "Сколько кошельков сразу. 20 — все выбранные.",
-            "default": 3,
+            "description": "Сколько Ads-профилей сразу. Больше 5 Ads не тянет.",
+            "default": 2,
             "minimum": 1,
-            "maximum": 20,
+            "maximum": 5,
             "multipleOf": 1,
             "x-ui": {"group": "Выполнение", "order": 0, "unit": "аккаунтов"}
           },

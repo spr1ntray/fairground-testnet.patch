@@ -490,20 +490,28 @@ class ManifestTests(unittest.TestCase):
             (ROOT / "fairground-testnet" / "hub.plugin.json").read_text(encoding="utf-8")
         )
         farm = next(action for action in manifest["actions"] if action["id"] == "farm")
-        self.assertEqual(farm["resources"]["account"], ["private_key", "proxy"])
-        self.assertEqual(farm["resources"]["settings"], [])
-        self.assertNotIn("adspower_profile", farm["resources"]["account"])
-        self.assertNotIn("email_password", farm["permissions"]["secrets"])
+        self.assertEqual(
+            farm["resources"]["account"],
+            ["private_key", "proxy", "adspower_profile", "email_password"],
+        )
+        self.assertEqual(farm["resources"]["settings"], ["adspower_api"])
+        self.assertIn("adspower_profile", farm["permissions"]["secrets"])
+        self.assertIn("email_password", farm["permissions"]["secrets"])
         self.assertLessEqual(len(manifest["presentation"]["description"]), 80)
-        self.assertFalse(manifest["permissions"]["browser"])
-        self.assertEqual(manifest["permissions"]["local_services"], [])
-        self.assertNotIn("adspower_profile", manifest["permissions"]["secrets"])
-        self.assertNotIn("adspower_api_key", manifest["permissions"]["secrets"])
+        self.assertTrue(manifest["permissions"]["browser"])
+        self.assertEqual(manifest["permissions"]["local_services"], ["adspower"])
+        self.assertIn("adspower_profile", manifest["permissions"]["secrets"])
+        self.assertIn("adspower_api_key", manifest["permissions"]["secrets"])
         self.assertFalse(any(action["id"] == "faucet" for action in manifest["actions"]))
         farm_conc = farm["options"]["properties"]["account_concurrency"]
-        self.assertEqual(farm_conc["maximum"], 20)
+        self.assertEqual(farm_conc["maximum"], 5)
         self.assertEqual(farm_conc["minimum"], 1)
         inspect = next(action for action in manifest["actions"] if action["id"] == "inspect")
+        self.assertNotIn("adspower_profile", inspect["resources"]["account"])
+        from plugin.fairground_bot.browser_trade import PLACE_ORDER_BUTTONS, CLOSE_POSITION_BUTTONS
+
+        self.assertTrue(any("Place order" in item for item in PLACE_ORDER_BUTTONS))
+        self.assertTrue(any("Close position" in item for item in CLOSE_POSITION_BUTTONS))
         point_col = next(col for col in inspect["output"]["columns"] if col["key"] == "points")
         self.assertEqual(point_col["title"], "Поинты")
         self.assertEqual(point_col["type"], "integer")

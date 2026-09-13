@@ -1,8 +1,6 @@
 """Fairground session inside an AdsPower Chrome profile.
 
-The live frontend (PostHog, canvas, heatmaps) runs in Ads. Trades are signed
-by the Hub private key, not by Rabby. The tab stays open so API fetch and
-posthog.capture share the same cookies and TLS as the browser.
+Open/close are UI clicks. Rabby signs. PostHog/canvas/TLS stay in the real tab.
 """
 
 from __future__ import annotations
@@ -103,6 +101,21 @@ ALERT_BUTTONS = (
     'button:has-text("Ignore")',
 )
 PERCENT_CHIPS = (10, 25, 50, 75)
+PLACE_ORDER_BUTTONS = (
+    'button:has-text("Place order")',
+)
+CLOSE_POSITION_BUTTONS = (
+    'button:has-text("Close position")',
+)
+CONFIRM_DIALOG_BUTTONS = (
+    'button:has-text("Confirm")',
+)
+MARKET_ORDER_BUTTONS = (
+    'button:has-text("Market")',
+)
+MAX_BUTTONS = (
+    'button:has-text("Max")',
+)
 LogFn = Callable[[str], None]
 CancelCheck = Callable[[], None] | None
 
@@ -316,7 +329,7 @@ class BrowserTrader:
         self._playwright = None
 
     def warm(self, style: SessionStyle | None = None) -> None:
-        """Unlock Rabby, hard-reload Fairground, Connect if needed. Hub key signs trades."""
+        """Unlock Rabby, hard-reload Fairground, Connect if needed."""
         self._cancel()
         page = self._pick_working_page()
         self._page = page
@@ -356,6 +369,68 @@ class BrowserTrader:
             except Exception:
                 blocked.add(market)
                 continue
+
+    def place_market(self, *, market: str, side: str, percent: int) -> bool:
+        """Click market / side / size / Place order, then sign in Rabby."""
+
+        self._cancel()
+        if not self.select_market(market):
+            self.log(f"Рынок {market} недоступен")
+            return False
+        page = self._need_page()
+        side_label = "Long" if str(side).lower() == "long" else "Short"
+        if not self._click_first(page, (f'button:has-text("{side_label}")',), timeout_ms=3500):
+            self.log(f"Нет кнопки {side_label}")
+            return False
+        self._sleep(0.25, 0.7)
+        self._click_first(page, MARKET_ORDER_BUTTONS, timeout_ms=2000)
+        self._sleep(0.2, 0.5)
+        chip = f"{int(percent)}%"
+        if not self._click_first(page, (f'button:has-text("{chip}")',), timeout_ms=2500):
+            self._click_first(page, MAX_BUTTONS, timeout_ms=1600)
+        self._sleep(0.4, 1.0)
+        if not self._click_first(page, PLACE_ORDER_BUTTONS, timeout_ms=4500):
+            self.log("Нет Place order")
+            return False
+        self.log(f"Place order · {market} {side_label} {chip}")
+        self._sleep(0.45, 0.9)
+        signed = self.confirm_rabby(timeout=28)
+        self.log(f"Rabby open · clicks={signed}")
+        opened = 0
+        for _ in range(8):
+            body = self._body().lower()
+            if "opened" in body or "submitting order" in body:
+                opened += 1
+                break
+            signed += self.confirm_rabby(timeout=2.5)
+            self._sleep(0.6, 1.1)
+        self.opened += 1
+        return True
+
+    def close_open_position(self) -> bool:
+        """Close position dialog + Max + Confirm, then sign in Rabby."""
+
+        self._cancel()
+        page = self._need_page()
+        if not self._click_first(page, CLOSE_POSITION_BUTTONS, timeout_ms=4500):
+            self.log("Нет Close position")
+            return False
+        self.log("Close position")
+        self._sleep(0.3, 0.7)
+        self._click_first(page, MAX_BUTTONS, timeout_ms=2000)
+        self._sleep(0.2, 0.5)
+        if not self._click_first(page, CONFIRM_DIALOG_BUTTONS, timeout_ms=3500):
+            self._click_first(page, CLOSE_POSITION_BUTTONS, timeout_ms=2000)
+        signed = self.confirm_rabby(timeout=28)
+        self.log(f"Rabby close · clicks={signed}")
+        for _ in range(8):
+            body = self._body().lower()
+            if "close request submitted" in body or "your position will update" in body:
+                break
+            signed += self.confirm_rabby(timeout=2.5)
+            self._sleep(0.6, 1.1)
+        self.closed += 1
+        return True
 
     def unlock_rabby(self) -> None:
         if not self.password:

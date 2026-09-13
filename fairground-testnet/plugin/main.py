@@ -19,6 +19,7 @@ from plugin.adspower import (
 )
 from plugin.fairground_bot.accounts import FarmAccount
 from plugin.fairground_bot.adspower_faucet import AdsPowerFaucetConfig, run_arbitrum_sepolia_faucet
+from plugin.fairground_bot.browser_trade import BrowserTradeError
 from plugin.fairground_bot.config import Settings
 from plugin.fairground_bot.client import FairgroundAPIError
 from plugin.fairground_bot.farm import FarmConfig, FarmError, VolumeFarm
@@ -85,7 +86,9 @@ def run(context: HubContext) -> dict[str, Any]:
     identities: dict[str, BrowserIdentity] = {}
     blocked: set[str] = set()
     if context.action_id in {"farm", "inspect"}:
-        blocked, identities = _resolve_identities(context, required=False)
+        blocked, identities = _resolve_identities(
+            context, required=context.action_id == "farm"
+        )
 
     counters = {
         "total": len(context.accounts),
@@ -271,7 +274,7 @@ def _run_account(
         )
         return "succeeded" if ok else "partial"
 
-    context.account_state(hub.id, status="running", stage="session", progress=0.16, message="HTTP-сделки ключом Hub")
+    context.account_state(hub.id, status="running", stage="session", progress=0.16, message="Открываю Ads")
 
     style = roll_session(farm_account.address, str(context.run_id))
     family = style.family
@@ -299,6 +302,12 @@ def _run_account(
     volume = "0"
     http_ok = False
     row = None
+    password = ""
+    try:
+        password = str(hub.secret("email_password") or "")
+    except KeyError:
+        password = ""
+    _protect(context, password)
     try:
         try:
             engine.preflight()
@@ -308,14 +317,19 @@ def _run_account(
                 level="warning",
                 account_id=hub.id,
             )
-        context.account_state(hub.id, status="running", stage="trade", progress=0.48, message="HTTP open/close")
+        api_key = context.settings.secret("adspower_api")
+        _protect(context, api_key)
+        engine.bind_ads(api_key=api_key, password=password)
+        context.account_state(
+            hub.id, status="running", stage="trade", progress=0.48, message="Ads open/close · Rabby"
+        )
         rows = engine.run()
         row = rows[0] if rows else None
         completed = int(row.completed_trades) if row else 0
         planned = int(row.planned_trades) if row else 0
         volume = str(row.volume_notional_estimate) if row else "0"
         http_ok = bool(row and row.success)
-    except (FarmError, FairgroundAPIError) as exc:
+    except (FarmError, FairgroundAPIError, AdsPowerError, BrowserTradeError, KeyError) as exc:
         context.log(str(exc), level="warning", account_id=hub.id)
         http_ok = False
 
@@ -647,7 +661,7 @@ def _protect(context: HubContext, value: str | None) -> None:
 
 def _protect_all(context: HubContext) -> None:
     for account in context.accounts:
-        for kind in ("evm_private_key", "proxy", "adspower_profile"):
+        for kind in ("evm_private_key", "proxy", "adspower_profile", "email_password"):
             try:
                 _protect(context, account.secret(kind))
             except KeyError:

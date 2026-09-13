@@ -17,6 +17,7 @@ from .onchain import OnchainError, OnchainExecutor, SimulationError
 from .operations import WalletOperations
 from .proxy import ProxyError
 from .safety import MarketLimits
+from .browser_trade import BrowserTrader, pick_market, pick_percent
 from .identity import BrowserIdentity
 from .preview import TradePreviewService
 from .signer import SignerError, load_private_key_hex
@@ -1066,6 +1067,9 @@ class VolumeFarm:
         self._on_round: Callable[[dict[str, Any]], None] | None = None
         self._browser_fetch: Callable[[str, dict[str, str], bytes], tuple[int, bytes]] | None = None
         self._cookie_header = ""
+        self._trader: Any | None = None
+        self._ads_api_key = ""
+        self._ads_password = ""
         # Used only when main.py could not validate current parameters but a
         # persisted LIVE cycle still needs its exact saved intent recovered.
         # This is a hard execution boundary: no catalog, preview, intent, or
@@ -1142,6 +1146,211 @@ class VolumeFarm:
     ) -> None:
         self._cookie_header = str(cookie_header or "")
         self._browser_fetch = browser_fetch
+
+    def bind_trader(self, trader: Any | None) -> None:
+        self._trader = trader
+
+    def bind_ads(self, *, api_key: str, password: str = "") -> None:
+        self._ads_api_key = str(api_key or "")
+        self._ads_password = str(password or "")
+
+    def _exposure_count(self, client: FairgroundClient, address: str) -> int:
+        try:
+            raw = client.get_open_positions(address).get("positions")
+        except (FairgroundAPIError, TypeError, ValueError):
+            return -1
+        if not isinstance(raw, list):
+            return -1
+        return len(raw)
+
+    def _wait_exposure(
+        self,
+        client: FairgroundClient,
+        address: str,
+        *,
+        want_open: bool,
+        timeout_seconds: float,
+    ) -> bool:
+        deadline = time.monotonic() + max(5.0, float(timeout_seconds))
+        while time.monotonic() < deadline:
+            if self._cancel_check is not None:
+                self._cancel_check()
+            count = self._exposure_count(client, address)
+            if want_open and count > 0:
+                return True
+            if not want_open and count == 0:
+                return True
+            self.sleep(2.0)
+        count = self._exposure_count(client, address)
+        if want_open:
+            return count > 0
+        return count == 0
+
+    def _run_browser_rounds(
+        self,
+        *,
+        account: FarmAccount,
+        client: FairgroundClient,
+        session: SessionStyle | None,
+        planned: int,
+        first_new_round: int,
+        result: AccountFarmResult,
+    ) -> None:
+        if self._trader is not None:
+            self._drive_browser_rounds(
+                trader=self._trader,
+                account=account,
+                client=client,
+                session=session,
+                planned=planned,
+                first_new_round=first_new_round,
+                result=result,
+            )
+            return
+        profile_id = account.adspower_profile_id
+        if len(self._ads_api_key) < 4 or len(profile_id) < 4:
+            raise FarmError(f"{account.label}: нет AdsPower профиля")
+        from plugin.adspower import AdsPowerClient
+
+        ads = AdsPowerClient(self._ads_api_key)
+        ads_session = None
+        try:
+            ads.health()
+            ads_session = ads.start_or_attach(profile_id)
+            with BrowserTrader(
+                ws_url=ads_session.ws_url,
+                expected_address=account.address,
+                log=self.log,
+                password=self._ads_password,
+                cancel_check=self._cancel_check,
+            ) as trader:
+                trader.warm(session)
+                self._drive_browser_rounds(
+                    trader=trader,
+                    account=account,
+                    client=client,
+                    session=session,
+                    planned=planned,
+                    first_new_round=first_new_round,
+                    result=result,
+                )
+        except FarmError:
+            raise
+        except Exception as exc:
+            raise FarmError(
+                f"{account.label}: Ads {type(exc).__name__}: {exc}"
+            ) from exc
+        finally:
+            if ads_session is not None:
+                ads.stop_if_started(profile_id, ads_session.started_by_us)
+            ads.close()
+
+    def _drive_browser_rounds(
+        self,
+        *,
+        trader: Any,
+        account: FarmAccount,
+        client: FairgroundClient,
+        session: SessionStyle | None,
+        planned: int,
+        first_new_round: int,
+        result: AccountFarmResult,
+    ) -> None:
+        excluded: set[str] = set()
+        for round_index in range(first_new_round, planned + 1):
+            if self._cancel_check is not None:
+                self._cancel_check()
+            market = pick_market(session, excluded)
+            side = "long"
+            if session is not None:
+                side = "long" if session.rng.random() < session.long_bias else "short"
+            if not self.farm.allow_long:
+                side = "short"
+            if not self.farm.allow_short:
+                side = "long"
+            percent = pick_percent(session, 10, 50)
+            hold = (
+                session_hold_seconds(session, self.farm.hold_seconds)
+                if session is not None
+                else int(self.farm.hold_seconds[0])
+            )
+            self.log(
+                f"[•] {account.label} | ROUND {round_index}/{planned} · "
+                f"{market} · OPEN {side.upper()} · chip={percent}% · "
+                f"hold={hold}s · Ads UI / Rabby"
+            )
+            try:
+                placed = trader.place_market(market=market, side=side, percent=percent)
+            except Exception as exc:
+                self.log(
+                    f"[!] {account.label} | Place order · {type(exc).__name__}: {exc}"
+                )
+                excluded.add(market)
+                continue
+            if not placed:
+                excluded.add(market)
+                continue
+            if not self._wait_exposure(
+                client, account.address, want_open=True, timeout_seconds=90
+            ):
+                try:
+                    trader.confirm_rabby(timeout=10)
+                except Exception:
+                    pass
+                if not self._wait_exposure(
+                    client, account.address, want_open=True, timeout_seconds=45
+                ):
+                    self.log(f"[!] {account.label} | open не появился в GetOpenPositions")
+                    excluded.add(market)
+                    continue
+            self.log(f"[•] {account.label} | HOLD · {hold}s")
+            self._pause(float(hold))
+            try:
+                closed = trader.close_open_position()
+            except Exception as exc:
+                self.log(
+                    f"[!] {account.label} | Close position · {type(exc).__name__}: {exc}"
+                )
+                closed = False
+            if not closed:
+                self.log(f"[!] {account.label} | Close position не нажался")
+            if not self._wait_exposure(
+                client, account.address, want_open=False, timeout_seconds=90
+            ):
+                try:
+                    trader.confirm_rabby(timeout=10)
+                    trader.close_open_position()
+                except Exception:
+                    pass
+                if not self._wait_exposure(
+                    client, account.address, want_open=False, timeout_seconds=45
+                ):
+                    self.log(f"[!] {account.label} | позиция ещё открыта после close")
+                    result.errors.append(f"Round {round_index}: close not flat")
+                    break
+            result.completed_trades += 1
+            result.last_state = "COMPLETE"
+            self.log(
+                f"[✓] {account.label} | ROUND {round_index}/{planned} COMPLETE · "
+                f"progress={result.completed_trades}/{planned}"
+            )
+            if round_index < planned:
+                pause = between_rounds_delay(
+                    cancel_check=self._cancel_check,
+                    style=session,
+                    fallback=self.farm.sleep_between_rounds,
+                )
+                self.log(
+                    f"[•] {account.label} | WAIT · {pause:.1f}s до следующего round"
+                )
+        try:
+            portfolio = client.get_portfolio(account.address).get("portfolio")
+            if isinstance(portfolio, dict):
+                result.volume_notional_estimate = str(
+                    portfolio.get("totalVolume") or result.volume_notional_estimate or "0"
+                )
+        except (FairgroundAPIError, TypeError, ValueError):
+            pass
 
     def _waitlist_for(
         self, client: FairgroundClient, account: FarmAccount, usdc_units: int
@@ -2065,7 +2274,21 @@ class VolumeFarm:
                 result.last_state = "LEFTOVER"
                 return result
 
-            for round_index in range(first_new_round, planned + 1):
+            if self._trader is not None or self._ads_api_key:
+                self._run_browser_rounds(
+                    account=account,
+                    client=client,
+                    session=session,
+                    planned=planned,
+                    first_new_round=first_new_round,
+                    result=result,
+                )
+                try:
+                    volume = Decimal(str(result.volume_notional_estimate or "0"))
+                except (InvalidOperation, ValueError, TypeError):
+                    pass
+            else:
+              for round_index in range(first_new_round, planned + 1):
                 if self.store.get_active_cycle(account.address) is not None:
                     result.errors.append("Active cycle still present before new round")
                     break
